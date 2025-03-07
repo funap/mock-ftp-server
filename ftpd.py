@@ -4,6 +4,7 @@ import random
 import tkinter as tk
 import threading
 import queue
+import argparse
 from dataclasses import dataclass
 from typing import Optional, Dict, List
 from datetime import datetime
@@ -337,11 +338,11 @@ class FTPCommandHandler:
             await writer.wait_closed()
 
 class FTPMockServer:
-    def __init__(self, host='127.0.0.1', port=2121):
+    def __init__(self, host='127.0.0.1', port=8021):
         self.host = host
         self.port = port
         self.running = False
-        self.data_port = 2121
+        self.data_port = port
         self.current_directory = "/"
         self.command_handler = FTPCommandHandler(self.current_directory, self.host, self.data_port)
 
@@ -402,7 +403,11 @@ def signal_handler(signum, frame):
     exit(0)
 
 if __name__ == "__main__":
-    server = FTPMockServer()
+    parser = argparse.ArgumentParser(description='FTP Mock Server')
+    parser.add_argument('--port', type=int, default=8021, help='Port number to listen on')
+    args = parser.parse_args()
+
+    server = FTPMockServer(port=args.port)
     try:
         asyncio.run(server.start())
     except KeyboardInterrupt:
