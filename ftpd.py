@@ -6,7 +6,8 @@ import threading
 import queue
 import argparse
 from dataclasses import dataclass
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Protocol, runtime_checkable
+from abc import ABC, abstractmethod
 from datetime import datetime
 
 @dataclass
@@ -29,7 +30,43 @@ class FTPResponse:
     def encode(self) -> bytes:
         return f"{self.code} {self.message}\r\n".encode()
 
-class VirtualFileSystem:
+class IFileSystem(ABC):
+    """Interface for file system operations."""
+    @abstractmethod
+    def get_dir_info(self, path: str) -> Optional[DirectoryInfo]:
+        pass
+
+    @abstractmethod
+    def get_file_info(self, path: str) -> Optional[FileInfo]:
+        pass
+
+    @abstractmethod
+    def store_file(self, path: str, content: bytes) -> None:
+        pass
+
+class IMockBehavior(ABC):
+    @abstractmethod
+    def should_return_error(self, command: str) -> bool:
+        pass
+
+    @abstractmethod
+    def get_command_delay(self, command: str) -> float:
+        pass
+
+    @abstractmethod
+    def log_message(self, message: str) -> None:
+        pass
+
+class IFTPCommandHandler(ABC):
+    @abstractmethod
+    async def handle_command(self, command: str, args: str) -> FTPResponse:
+        pass
+
+    @abstractmethod
+    async def handle_data_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        pass
+
+class VirtualFileSystem(IFileSystem):
     def __init__(self):
         self.fs = {
             '/': DirectoryInfo(
@@ -80,7 +117,7 @@ class VirtualFileSystem:
                     return file
         return None
 
-    def store_file(self, path: str, content: bytes):
+    def store_file(self, path: str, content: bytes) -> None:
         dirname = '/'.join(path.split('/')[:-1]) or '/'
         filename = path.split('/')[-1]
         dir_info = self.get_dir_info(dirname)
@@ -93,24 +130,39 @@ class VirtualFileSystem:
             )
             dir_info.files.append(new_file)
 
-class FTPCommandHandler:
-    def __init__(self, current_directory: str, host: str, data_port: int):
-        self.current_directory = current_directory
-        self.host = host
-        self.data_port = data_port
-        self.data_server = None
-        self.vfs = VirtualFileSystem()
+class MockBehavior(IMockBehavior):
+    def __init__(self):
         self.error_settings = {}
         self.delay_settings = {}
         self.log_queue = queue.Queue()
-        self.store_mode = False
-        self.pending_store_filename = None
 
-        self.gui_thread = threading.Thread(target=self.run_gui)
-        self.gui_thread.daemon = True
-        self.gui_thread.start()
+    def should_return_error(self, command: str) -> bool:
+        return self.error_settings.get(command, tk.BooleanVar()).get()
 
-    def run_gui(self):
+    def get_command_delay(self, command: str) -> float:
+        spinbox = self.delay_settings.get(command)
+        if spinbox:
+            try:
+                return float(spinbox.get())
+            except ValueError:
+                return 0
+        return 0
+
+    def log_message(self, message: str) -> None:
+        self.log_queue.put(message)
+
+    def set_error_settings(self, command: str, var: tk.BooleanVar) -> None:
+        self.error_settings[command] = var
+
+    def set_delay_settings(self, command: str, spinbox: tk.Spinbox) -> None:
+        self.delay_settings[command] = spinbox
+
+class MockServerGUI:
+    def __init__(self, mock_behavior: MockBehavior):
+        self.mock_behavior = mock_behavior
+        self.root = None
+
+    def run(self):
         self.root = tk.Tk()
         self.root.title("FTP Mock Server Settings")
 
@@ -124,32 +176,27 @@ class FTPCommandHandler:
             cmd_frame.pack(fill="x", anchor="w")
 
             var = tk.BooleanVar()
-            self.error_settings[cmd] = var
+            self.mock_behavior.set_error_settings(cmd, var)
             tk.Checkbutton(cmd_frame, text=f"{cmd} Error", variable=var).pack(side=tk.LEFT)
 
             tk.Label(cmd_frame, text="Delay:").pack(side=tk.LEFT, padx=(10,0))
             spinbox = tk.Spinbox(cmd_frame, from_=0, to=10, increment=0.1, width=5)
             spinbox.pack(side=tk.LEFT)
-            self.delay_settings[cmd] = spinbox
+            self.mock_behavior.set_delay_settings(cmd, spinbox)
 
         self.root.protocol("WM_DELETE_WINDOW", lambda: None)
-
         self.root.mainloop()
 
-    def log_message(self, message: str):
-        self.log_queue.put(message)
-
-    def should_return_error(self, command: str) -> bool:
-        return self.error_settings.get(command, tk.BooleanVar()).get()
-
-    def get_command_delay(self, command: str) -> float:
-        spinbox = self.delay_settings.get(command)
-        if spinbox:
-            try:
-                return float(spinbox.get())
-            except ValueError:
-                return 0
-        return 0
+class FTPCommandHandler(IFTPCommandHandler):
+    def __init__(self, host: str, data_port: int, file_system: IFileSystem, mock_behavior: IMockBehavior):
+        self.current_directory = "/"
+        self.host = host
+        self.data_port = data_port
+        self.data_server = None
+        self.vfs = file_system
+        self.mock_behavior = mock_behavior
+        self.store_mode = False
+        self.pending_store_filename = None
 
     def _format_directory_entry(self, name: str, is_dir: bool = False) -> str:
         if is_dir:
@@ -181,10 +228,10 @@ class FTPCommandHandler:
         return '\r\n'.join(result) + '\r\n'
 
     async def _setup_passive_mode(self) -> FTPResponse:
-        if self.should_return_error("PASV"):
+        if self.mock_behavior.should_return_error("PASV"):
             return FTPResponse(500, "PASV command failed")
 
-        delay = self.get_command_delay("PASV")
+        delay = self.mock_behavior.get_command_delay("PASV")
         if delay > 0:
             await asyncio.sleep(delay)
 
@@ -203,10 +250,10 @@ class FTPCommandHandler:
         return FTPResponse(227, f"Entering Passive Mode ({h1},{h2},{h3},{h4},{p1},{p2})")
 
     async def _handle_cwd_command(self, path: str) -> FTPResponse:
-        if self.should_return_error("CWD"):
+        if self.mock_behavior.should_return_error("CWD"):
             return FTPResponse(550, "CWD command failed")
 
-        delay = self.get_command_delay("CWD")
+        delay = self.mock_behavior.get_command_delay("CWD")
         if delay > 0:
             await asyncio.sleep(delay)
 
@@ -240,10 +287,10 @@ class FTPCommandHandler:
         return FTPResponse(550, "Directory not found.")
 
     async def _handle_stor_command(self, filename: str) -> FTPResponse:
-        if self.should_return_error("STOR"):
+        if self.mock_behavior.should_return_error("STOR"):
             return FTPResponse(550, "STOR command failed")
 
-        delay = self.get_command_delay("STOR")
+        delay = self.mock_behavior.get_command_delay("STOR")
         if delay > 0:
             await asyncio.sleep(delay)
 
@@ -254,14 +301,39 @@ class FTPCommandHandler:
         self.pending_store_filename = filename
         return FTPResponse(150, "Ok to send data")
 
+    async def _handle_list_command(self) -> FTPResponse:
+        if self.mock_behavior.should_return_error("LIST"):
+            return FTPResponse(500, "LIST command failed")
+
+        delay = self.mock_behavior.get_command_delay("LIST")
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+        if not self.data_server:
+            return FTPResponse(425, "Use PASV first")
+        self.pending_data = self.get_directory_listing(self.current_directory)
+        return FTPResponse(150, "Opening ASCII mode data connection for file list")
+
+    async def _handle_quit_command(self) -> FTPResponse:
+        if self.mock_behavior.should_return_error("QUIT"):
+            return FTPResponse(500, "QUIT command failed")
+
+        delay = self.mock_behavior.get_command_delay("QUIT")
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+        if self.data_server:
+            self.data_server.close()
+        return FTPResponse(221, "Goodbye")
+
     async def handle_command(self, command: str, args: str) -> FTPResponse:
         command = command.upper()
-        self.log_message(f"Received command: {command} {args}")
+        self.mock_behavior.log_message(f"Received command: {command} {args}")
 
-        if self.should_return_error(command):
+        if self.mock_behavior.should_return_error(command):
             return FTPResponse(500, f"{command} command failed")
 
-        delay = self.get_command_delay(command)
+        delay = self.mock_behavior.get_command_delay(command)
         if delay > 0:
             await asyncio.sleep(delay)
 
@@ -274,7 +346,7 @@ class FTPCommandHandler:
             "LIST": self._handle_list_command,
             "CWD": self._handle_cwd_command,
             "STOR": self._handle_stor_command,
-            "QUIT": self._handle_quit_command
+            "QUIT": self._handle_quit_command,
         }
 
         handler = command_handlers.get(command)
@@ -288,34 +360,9 @@ class FTPCommandHandler:
                     response = await handler()
             else:
                 response = handler()
-            self.log_message(f"Sending response: {response.code} {response.message}")
+            self.mock_behavior.log_message(f"Sending response: {response.code} {response.message}")
             return response
         return FTPResponse(500, "Unknown command")
-
-    async def _handle_list_command(self) -> FTPResponse:
-        if self.should_return_error("LIST"):
-            return FTPResponse(500, "LIST command failed")
-
-        delay = self.get_command_delay("LIST")
-        if delay > 0:
-            await asyncio.sleep(delay)
-
-        if not self.data_server:
-            return FTPResponse(425, "Use PASV first")
-        self.pending_data = self.get_directory_listing(self.current_directory)
-        return FTPResponse(150, "Opening ASCII mode data connection for file list")
-
-    async def _handle_quit_command(self) -> FTPResponse:
-        if self.should_return_error("QUIT"):
-            return FTPResponse(500, "QUIT command failed")
-
-        delay = self.get_command_delay("QUIT")
-        if delay > 0:
-            await asyncio.sleep(delay)
-
-        if self.data_server:
-            self.data_server.close()
-        return FTPResponse(221, "Goodbye")
 
     async def handle_data_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         if self.store_mode:
@@ -343,8 +390,20 @@ class FTPMockServer:
         self.port = port
         self.running = False
         self.data_port = port
-        self.current_directory = "/"
-        self.command_handler = FTPCommandHandler(self.current_directory, self.host, self.data_port)
+        
+        self.mock_behavior = MockBehavior()
+        self.file_system = VirtualFileSystem()
+        self.command_handler = FTPCommandHandler(
+            self.host,
+            self.data_port,
+            self.file_system,
+            self.mock_behavior
+        )
+        
+        self.gui = MockServerGUI(self.mock_behavior)
+        self.gui_thread = threading.Thread(target=self.gui.run)
+        self.gui_thread.daemon = True
+        self.gui_thread.start()
 
     async def start(self):
         self.running = True
