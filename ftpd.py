@@ -2,6 +2,7 @@ import socket
 import asyncio
 import random
 import tkinter as tk
+from tkinter import ttk, scrolledtext
 import threading
 import queue
 import argparse
@@ -161,31 +162,73 @@ class MockServerGUI:
     def __init__(self, mock_behavior: MockBehavior):
         self.mock_behavior = mock_behavior
         self.root = None
+        self.log_text = None
 
     def run(self):
         self.root = tk.Tk()
-        self.root.title("FTP Mock Server Settings")
+        self.root.title("FTP Mock Server")
+        self.root.geometry("800x500")
 
-        settings_frame = tk.Frame(self.root)
-        settings_frame.pack(fill="x", padx=10, pady=5)
+        style = ttk.Style()
+        if 'clam' in style.theme_names():
+            style.theme_use('clam')
+
+        main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        main_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Settings
+        settings_frame = ttk.LabelFrame(main_paned, text="Command Settings")
+        main_paned.add(settings_frame, weight=1)
+
+        ttk.Label(settings_frame, text="Command").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.Label(settings_frame, text="Force Error").grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(settings_frame, text="Delay (s)").grid(row=0, column=2, padx=5, pady=5)
 
         commands = ["USER", "PASS", "PWD", "TYPE", "PASV", "LIST", "CWD", "QUIT", "STOR"]
-
-        for cmd in commands:
-            cmd_frame = tk.Frame(settings_frame)
-            cmd_frame.pack(fill="x", anchor="w")
+        for i, cmd in enumerate(commands, start=1):
+            ttk.Label(settings_frame, text=cmd).grid(row=i, column=0, padx=5, pady=5, sticky="w")
 
             var = tk.BooleanVar()
             self.mock_behavior.set_error_settings(cmd, var)
-            tk.Checkbutton(cmd_frame, text=f"{cmd} Error", variable=var).pack(side=tk.LEFT)
+            ttk.Checkbutton(settings_frame, variable=var).grid(row=i, column=1, padx=5, pady=5)
 
-            tk.Label(cmd_frame, text="Delay:").pack(side=tk.LEFT, padx=(10,0))
-            spinbox = tk.Spinbox(cmd_frame, from_=0, to=10, increment=0.1, width=5)
-            spinbox.pack(side=tk.LEFT)
+            spinbox = ttk.Spinbox(settings_frame, from_=0, to=10, increment=0.1, width=8)
+            spinbox.set(0)
+            spinbox.grid(row=i, column=2, padx=5, pady=5)
             self.mock_behavior.set_delay_settings(cmd, spinbox)
 
+        # Logs
+        log_frame = ttk.LabelFrame(main_paned, text="Server Logs")
+        main_paned.add(log_frame, weight=2)
+
+        self.log_text = scrolledtext.ScrolledText(log_frame, state='disabled', font=("Consolas", 10))
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        ttk.Button(log_frame, text="Clear Logs", command=self.clear_logs).pack(pady=5)
+
         self.root.protocol("WM_DELETE_WINDOW", lambda: None)
+        self.root.after(100, self.poll_logs)
         self.root.mainloop()
+
+    def clear_logs(self):
+        if self.log_text:
+            self.log_text.config(state='normal')
+            self.log_text.delete(1.0, tk.END)
+            self.log_text.config(state='disabled')
+
+    def poll_logs(self):
+        while True:
+            try:
+                msg = self.mock_behavior.log_queue.get_nowait()
+                if self.log_text:
+                    self.log_text.config(state='normal')
+                    self.log_text.insert(tk.END, f"{msg}\n")
+                    self.log_text.see(tk.END)
+                    self.log_text.config(state='disabled')
+            except queue.Empty:
+                break
+        if self.root:
+            self.root.after(100, self.poll_logs)
 
 class FTPCommandHandler(IFTPCommandHandler):
     def __init__(self, host: str, data_port: int, file_system: IFileSystem, mock_behavior: IMockBehavior):
@@ -362,7 +405,10 @@ class FTPCommandHandler(IFTPCommandHandler):
                 response = handler()
             self.mock_behavior.log_message(f"Sending response: {response.code} {response.message}")
             return response
-        return FTPResponse(500, "Unknown command")
+
+        response = FTPResponse(500, "Unknown command")
+        self.mock_behavior.log_message(f"Sending response: {response.code} {response.message}")
+        return response
 
     async def handle_data_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         if self.store_mode:
@@ -372,7 +418,9 @@ class FTPCommandHandler(IFTPCommandHandler):
                 path += '/'
             path += self.pending_store_filename
             self.vfs.store_file(path, data)
-            print(f"Stored {len(data)} bytes to file {path}")
+            msg = f"Stored {len(data)} bytes to file {path}"
+            print(msg)
+            self.mock_behavior.log_message(msg)
             self.store_mode = False
             self.pending_store_filename = None
             writer.close()
@@ -390,7 +438,7 @@ class FTPMockServer:
         self.port = port
         self.running = False
         self.data_port = port
-        
+
         self.mock_behavior = MockBehavior()
         self.file_system = VirtualFileSystem()
         self.command_handler = FTPCommandHandler(
@@ -399,7 +447,7 @@ class FTPMockServer:
             self.file_system,
             self.mock_behavior
         )
-        
+
         self.gui = MockServerGUI(self.mock_behavior)
         self.gui_thread = threading.Thread(target=self.gui.run)
         self.gui_thread.daemon = True
@@ -412,14 +460,18 @@ class FTPMockServer:
             self.host,
             self.port
         )
-        print(f"FTP Mock Server running on {self.host}:{self.port}")
+        msg = f"FTP Mock Server running on {self.host}:{self.port}"
+        print(msg)
+        self.mock_behavior.log_message(msg)
 
         async with server:
             await server.serve_forever()
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         addr = writer.get_extra_info('peername')
-        print(f"Client connected from {addr}")
+        msg = f"Client connected from {addr}"
+        print(msg)
+        self.mock_behavior.log_message(msg)
 
         writer.write(FTPResponse(220, "Welcome to FTP Mock Server").encode())
         await writer.drain()
@@ -447,11 +499,16 @@ class FTPMockServer:
                     break
 
             except Exception as e:
-                print(f"Error handling client: {e}")
+                msg = f"Error handling client: {e}"
+                print(msg)
+                self.mock_behavior.log_message(msg)
                 break
 
         writer.close()
         await writer.wait_closed()
+        msg = f"Client disconnected from {addr}"
+        print(msg)
+        self.mock_behavior.log_message(msg)
 
     def stop(self):
         self.running = False
