@@ -168,12 +168,35 @@ class MockServerGUI:
         self.root = tk.Tk()
         self.root.title("FTP Mock Server")
         self.root.geometry("800x500")
+        self.root.configure(bg='black')
 
         style = ttk.Style()
         if 'clam' in style.theme_names():
             style.theme_use('clam')
 
+        bg_color = "black"
+        fg_color = "#39FF14"  # Neon green
+        font_spec = ("Consolas", 10, "bold")
+
+        style.configure('.', background=bg_color, foreground=fg_color, font=font_spec)
+        style.configure('TFrame', background=bg_color)
+        style.configure('TLabelframe', background=bg_color, foreground=fg_color, bordercolor=fg_color)
+        style.configure('TLabelframe.Label', background=bg_color, foreground=fg_color, font=("Consolas", 12, "bold"))
+        style.configure('TLabel', background=bg_color, foreground=fg_color)
+        style.configure('TCheckbutton', background=bg_color, foreground=fg_color)
+        style.map('TCheckbutton',
+                  background=[('active', bg_color)],
+                  indicatorcolor=[('selected', fg_color), ('!selected', bg_color)])
+        style.configure('TButton', background=bg_color, foreground=fg_color, bordercolor=fg_color)
+        style.map('TButton',
+                  background=[('active', '#003300')],
+                  foreground=[('active', fg_color)])
+        style.configure('TSpinbox', fieldbackground=bg_color, foreground=fg_color, background=bg_color, arrowcolor=fg_color)
+        style.map('TSpinbox', fieldbackground=[('focus', bg_color)])
+
         main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        # PanedWindow background can also be updated but it's largely covered by frames
+        style.configure('TPanedwindow', background=bg_color)
         main_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         # Settings
@@ -201,7 +224,8 @@ class MockServerGUI:
         log_frame = ttk.LabelFrame(main_paned, text="Server Logs")
         main_paned.add(log_frame, weight=2)
 
-        self.log_text = scrolledtext.ScrolledText(log_frame, state='disabled', font=("Consolas", 10))
+        self.log_text = scrolledtext.ScrolledText(log_frame, state='disabled', font=("Consolas", 10, "bold"),
+                                                  bg="black", fg="#39FF14", insertbackground="#39FF14")
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         ttk.Button(log_frame, text="Clear Logs", command=self.clear_logs).pack(pady=5)
