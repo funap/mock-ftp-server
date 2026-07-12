@@ -1,5 +1,6 @@
 import socket
 import asyncio
+import inspect
 import random
 import tkinter as tk
 from tkinter import ttk, scrolledtext
@@ -168,71 +169,121 @@ class MockServerGUI:
         self.root = tk.Tk()
         self.root.title("FTP Mock Server")
         self.root.geometry("800x500")
-        self.root.configure(bg='black')
+
+        # VSCode/Zed-like Dark Theme Palette
+        bg_dark = "#181818"      # Sidebar/Settings background
+        bg_editor = "#1e1e1e"    # Logs background
+        bg_header = "#2d2d2d"    # Button/Header normal background
+        bg_hover = "#3c3c3c"     # Button hover background
+        fg_main = "#cccccc"      # Main text foreground
+        fg_muted = "#858585"     # Labels/Secondary foreground
+        accent_color = "#007acc" # VSCode Blue accent
+        border_color = "#303030" # Flat borders
+
+        self.root.configure(bg=bg_dark)
+
+        # Detect platform for typography fallback
+        windowing_system = self.root.tk.call('tk', 'windowingsystem')
+        if windowing_system == 'win32':
+            font_family_ui = "Segoe UI"
+            font_family_mono = "Consolas"
+        elif windowing_system == 'aqua':
+            font_family_ui = "SF Pro Text"
+            font_family_mono = "Menlo"
+        else:
+            font_family_ui = "DejaVu Sans"
+            font_family_mono = "DejaVu Sans Mono"
+
+        font_spec_ui = (font_family_ui, 10)
+        font_spec_ui_bold = (font_family_ui, 10, "bold")
+        font_spec_mono = (font_family_mono, 10)
 
         style = ttk.Style()
         if 'clam' in style.theme_names():
             style.theme_use('clam')
 
-        bg_color = "black"
-        fg_color = "#39FF14"  # Neon green
-        font_spec = ("Consolas", 10, "bold")
-
-        style.configure('.', background=bg_color, foreground=fg_color, font=font_spec)
-        style.configure('TFrame', background=bg_color)
-        style.configure('TLabelframe', background=bg_color, foreground=fg_color, bordercolor=fg_color)
-        style.configure('TLabelframe.Label', background=bg_color, foreground=fg_color, font=("Consolas", 12, "bold"))
-        style.configure('TLabel', background=bg_color, foreground=fg_color)
-        style.configure('TCheckbutton', background=bg_color, foreground=fg_color)
+        # Configure styles
+        style.configure('.', background=bg_dark, foreground=fg_main, font=font_spec_ui)
+        style.configure('TFrame', background=bg_dark)
+        
+        # LabelFrame with thin border and clean padding
+        style.configure('TLabelframe', background=bg_dark, foreground=fg_main, bordercolor=border_color, lightcolor=border_color, darkcolor=border_color, borderwidth=1)
+        style.configure('TLabelframe.Label', background=bg_dark, foreground=accent_color, font=font_spec_ui_bold)
+        
+        style.configure('TLabel', background=bg_dark, foreground=fg_main)
+        
+        # Checkbutton styling
+        style.configure('TCheckbutton', background=bg_dark, foreground=fg_main, focuscolor=bg_dark)
         style.map('TCheckbutton',
-                  background=[('active', bg_color)],
-                  indicatorcolor=[('selected', fg_color), ('!selected', bg_color)])
-        style.configure('TButton', background=bg_color, foreground=fg_color, bordercolor=fg_color)
+                  background=[('active', bg_dark)],
+                  indicatorcolor=[('selected', accent_color), ('!selected', bg_dark)],
+                  foreground=[('active', fg_main)])
+        
+        # Flat Button styling
+        style.configure('TButton', background=bg_header, foreground=fg_main, bordercolor=border_color, lightcolor=border_color, darkcolor=border_color, borderwidth=1, relief="flat", padding=(10, 4))
         style.map('TButton',
-                  background=[('active', '#003300')],
-                  foreground=[('active', fg_color)])
-        style.configure('TSpinbox', fieldbackground=bg_color, foreground=fg_color, background=bg_color, arrowcolor=fg_color)
-        style.map('TSpinbox', fieldbackground=[('focus', bg_color)])
+                  background=[('pressed', accent_color), ('active', bg_hover)],
+                  foreground=[('pressed', '#ffffff'), ('active', fg_main)],
+                  bordercolor=[('active', border_color)])
 
+        # Spinbox styling
+        style.configure('TSpinbox', fieldbackground=bg_editor, foreground=fg_main, background=bg_header, arrowcolor=fg_main, bordercolor=border_color, lightcolor=border_color, darkcolor=border_color, borderwidth=1)
+        style.map('TSpinbox',
+                  fieldbackground=[('focus', bg_editor)],
+                  bordercolor=[('focus', accent_color)])
+
+        # PanedWindow
+        style.configure('TPanedwindow', background=bg_dark)
         main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        # PanedWindow background can also be updated but it's largely covered by frames
-        style.configure('TPanedwindow', background=bg_color)
-        main_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        main_paned.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
 
         # Settings
         settings_frame = ttk.LabelFrame(main_paned, text="Command Settings")
         main_paned.add(settings_frame, weight=1)
 
-        ttk.Label(settings_frame, text="Command").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        ttk.Label(settings_frame, text="Force Error").grid(row=0, column=1, padx=5, pady=5)
-        ttk.Label(settings_frame, text="Delay (s)").grid(row=0, column=2, padx=5, pady=5)
+        # Configure columns for setting frame to distribute space nicely
+        settings_frame.columnconfigure(0, weight=2)
+        settings_frame.columnconfigure(1, weight=1)
+        settings_frame.columnconfigure(2, weight=1)
+
+        # Headers
+        ttk.Label(settings_frame, text="Command", font=font_spec_ui_bold).grid(row=0, column=0, padx=8, pady=8, sticky="w")
+        ttk.Label(settings_frame, text="Force Error", font=font_spec_ui_bold).grid(row=0, column=1, padx=8, pady=8)
+        ttk.Label(settings_frame, text="Delay (s)", font=font_spec_ui_bold).grid(row=0, column=2, padx=8, pady=8)
 
         commands = ["USER", "PASS", "PWD", "TYPE", "PASV", "LIST", "CWD", "QUIT", "STOR"]
         for i, cmd in enumerate(commands, start=1):
-            ttk.Label(settings_frame, text=cmd).grid(row=i, column=0, padx=5, pady=5, sticky="w")
+            ttk.Label(settings_frame, text=cmd, font=font_spec_ui).grid(row=i, column=0, padx=8, pady=4, sticky="w")
 
             var = tk.BooleanVar()
             self.mock_behavior.set_error_settings(cmd, var)
-            ttk.Checkbutton(settings_frame, variable=var).grid(row=i, column=1, padx=5, pady=5)
+            ttk.Checkbutton(settings_frame, variable=var).grid(row=i, column=1, padx=8, pady=4)
 
             spinbox = ttk.Spinbox(settings_frame, from_=0, to=10, increment=0.1, width=8)
             spinbox.set(0)
-            spinbox.grid(row=i, column=2, padx=5, pady=5)
+            spinbox.grid(row=i, column=2, padx=8, pady=4)
             self.mock_behavior.set_delay_settings(cmd, spinbox)
 
         # Logs
         log_frame = ttk.LabelFrame(main_paned, text="Server Logs")
         main_paned.add(log_frame, weight=2)
 
-        self.log_text = scrolledtext.ScrolledText(log_frame, state='disabled', font=("Consolas", 10, "bold"),
-                                                  bg="black", fg="#39FF14", insertbackground="#39FF14")
-        self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.log_text = scrolledtext.ScrolledText(log_frame, state='disabled', font=font_spec_mono,
+                                                  bg=bg_editor, fg=fg_main, insertbackground=fg_main,
+                                                  relief="flat", borderwidth=0, highlightthickness=0)
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
 
-        ttk.Button(log_frame, text="Clear Logs", command=self.clear_logs).pack(pady=5)
+        clear_btn = ttk.Button(log_frame, text="Clear Logs", command=self.clear_logs)
+        clear_btn.pack(pady=8, padx=8, anchor="e")
 
-        self.root.protocol("WM_DELETE_WINDOW", lambda: None)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(100, self.poll_logs)
         self.root.mainloop()
+
+    def on_close(self):
+        if self.root:
+            self.root.destroy()
+            self.root = None
 
     def clear_logs(self):
         if self.log_text:
@@ -418,7 +469,7 @@ class FTPCommandHandler(IFTPCommandHandler):
 
         handler = command_handlers.get(command)
         if handler:
-            if asyncio.iscoroutinefunction(handler):
+            if inspect.iscoroutinefunction(handler):
                 if command == "CWD":
                     response = await handler(args)
                 elif command == "STOR":
@@ -462,6 +513,9 @@ class FTPMockServer:
         self.port = port
         self.running = False
         self.data_port = port
+        self.server = None
+        self.loop = None
+        self.server_thread = None
 
         self.mock_behavior = MockBehavior()
         self.file_system = VirtualFileSystem()
@@ -473,13 +527,19 @@ class FTPMockServer:
         )
 
         self.gui = MockServerGUI(self.mock_behavior)
-        self.gui_thread = threading.Thread(target=self.gui.run)
-        self.gui_thread.daemon = True
-        self.gui_thread.start()
 
-    async def start(self):
+    def start(self):
         self.running = True
-        server = await asyncio.start_server(
+        self.loop = asyncio.new_event_loop()
+        self.server_thread = threading.Thread(target=self._run_server, daemon=True)
+        self.server_thread.start()
+
+    def _run_server(self):
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_until_complete(self._start_async_server())
+
+    async def _start_async_server(self):
+        self.server = await asyncio.start_server(
             self.handle_client,
             self.host,
             self.port
@@ -488,8 +548,11 @@ class FTPMockServer:
         print(msg)
         self.mock_behavior.log_message(msg)
 
-        async with server:
-            await server.serve_forever()
+        async with self.server:
+            try:
+                await self.server.serve_forever()
+            except asyncio.CancelledError:
+                pass
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         addr = writer.get_extra_info('peername')
@@ -536,11 +599,12 @@ class FTPMockServer:
 
     def stop(self):
         self.running = False
-
-def signal_handler(signum, frame):
-    print("\nShutting down server...")
-    server.stop()
-    exit(0)
+        if self.server:
+            self.server.close()
+        if self.loop:
+            for task in asyncio.all_tasks(self.loop):
+                task.cancel()
+            self.loop.call_soon_threadsafe(self.loop.stop)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='FTP Mock Server')
@@ -548,8 +612,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     server = FTPMockServer(port=args.port)
+    server.start()
     try:
-        asyncio.run(server.start())
+        server.gui.run()
     except KeyboardInterrupt:
         print("\nShutting down server...")
+    finally:
         server.stop()
