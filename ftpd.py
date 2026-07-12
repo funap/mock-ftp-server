@@ -7,6 +7,7 @@ from tkinter import ttk, scrolledtext
 import threading
 import queue
 import argparse
+import logging
 from dataclasses import dataclass
 from typing import Optional, Dict, List, Protocol, runtime_checkable
 from abc import ABC, abstractmethod
@@ -132,11 +133,24 @@ class VirtualFileSystem(IFileSystem):
             )
             dir_info.files.append(new_file)
 
+logger = logging.getLogger("mock_ftp_server")
+
 class MockBehavior(IMockBehavior):
     def __init__(self):
         self.error_settings = {}
         self.delay_settings = {}
-        self.log_queue = queue.Queue()
+        self.setup_logging()
+
+    def setup_logging(self):
+        logger.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', '%H:%M:%S')
+        
+        # Avoid duplicate handlers
+        if not logger.handlers:
+            # Console Handler
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(formatter)
+            logger.addHandler(console_handler)
 
     def should_return_error(self, command: str) -> bool:
         return self.error_settings.get(command, tk.BooleanVar()).get()
@@ -151,7 +165,7 @@ class MockBehavior(IMockBehavior):
         return 0
 
     def log_message(self, message: str) -> None:
-        self.log_queue.put(message)
+        logger.info(message)
 
     def set_error_settings(self, command: str, var: tk.BooleanVar) -> None:
         self.error_settings[command] = var
@@ -159,24 +173,27 @@ class MockBehavior(IMockBehavior):
     def set_delay_settings(self, command: str, spinbox: tk.Spinbox) -> None:
         self.delay_settings[command] = spinbox
 
+
 class MockServerGUI:
-    def __init__(self, mock_behavior: MockBehavior):
+    def __init__(self, mock_behavior: MockBehavior, server: 'FTPMockServer'):
         self.mock_behavior = mock_behavior
+        self.server = server
         self.root = None
-        self.log_text = None
+        self.status_label = None
+        self.start_btn = None
+        self.stop_btn = None
 
     def run(self):
         self.root = tk.Tk()
         self.root.title("FTP Mock Server")
-        self.root.geometry("800x500")
+        self.root.geometry("380x520")
 
         # VSCode/Zed-like Dark Theme Palette
         bg_dark = "#181818"      # Sidebar/Settings background
-        bg_editor = "#1e1e1e"    # Logs background
-        bg_header = "#2d2d2d"    # Button/Header normal background
-        bg_hover = "#3c3c3c"     # Button hover background
+        bg_editor = "#1e1e1e"    # Input elements background
+        bg_header = "#2d2d2d"    # Header background
+        bg_hover = "#3c3c3c"     # Hover background
         fg_main = "#cccccc"      # Main text foreground
-        fg_muted = "#858585"     # Labels/Secondary foreground
         accent_color = "#007acc" # VSCode Blue accent
         border_color = "#303030" # Flat borders
 
@@ -186,17 +203,13 @@ class MockServerGUI:
         windowing_system = self.root.tk.call('tk', 'windowingsystem')
         if windowing_system == 'win32':
             font_family_ui = "Segoe UI"
-            font_family_mono = "Consolas"
         elif windowing_system == 'aqua':
             font_family_ui = "SF Pro Text"
-            font_family_mono = "Menlo"
         else:
             font_family_ui = "DejaVu Sans"
-            font_family_mono = "DejaVu Sans Mono"
 
         font_spec_ui = (font_family_ui, 10)
         font_spec_ui_bold = (font_family_ui, 10, "bold")
-        font_spec_mono = (font_family_mono, 10)
 
         style = ttk.Style()
         if 'clam' in style.theme_names():
@@ -218,13 +231,13 @@ class MockServerGUI:
                   background=[('active', bg_dark)],
                   indicatorcolor=[('selected', accent_color), ('!selected', bg_dark)],
                   foreground=[('active', fg_main)])
-        
+
         # Flat Button styling
         style.configure('TButton', background=bg_header, foreground=fg_main, bordercolor=border_color, lightcolor=border_color, darkcolor=border_color, borderwidth=1, relief="flat", padding=(10, 4))
         style.map('TButton',
-                  background=[('pressed', accent_color), ('active', bg_hover)],
-                  foreground=[('pressed', '#ffffff'), ('active', fg_main)],
-                  bordercolor=[('active', border_color)])
+                  background=[('pressed', accent_color), ('active', bg_hover), ('disabled', bg_dark)],
+                  foreground=[('pressed', '#ffffff'), ('active', fg_main), ('disabled', '#555555')],
+                  bordercolor=[('active', border_color), ('disabled', border_color)])
 
         # Spinbox styling
         style.configure('TSpinbox', fieldbackground=bg_editor, foreground=fg_main, background=bg_header, arrowcolor=fg_main, bordercolor=border_color, lightcolor=border_color, darkcolor=border_color, borderwidth=1)
@@ -232,14 +245,32 @@ class MockServerGUI:
                   fieldbackground=[('focus', bg_editor)],
                   bordercolor=[('focus', accent_color)])
 
-        # PanedWindow
-        style.configure('TPanedwindow', background=bg_dark)
-        main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        main_paned.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        # Server Control Frame
+        control_frame = ttk.LabelFrame(self.root, text="Server Control")
+        control_frame.pack(fill=tk.X, padx=15, pady=(15, 0))
+        
+        control_frame.columnconfigure(0, weight=1)
+        control_frame.columnconfigure(1, weight=1)
+        control_frame.columnconfigure(2, weight=1)
 
-        # Settings
-        settings_frame = ttk.LabelFrame(main_paned, text="Command Settings")
-        main_paned.add(settings_frame, weight=1)
+        # Status Label (dynamic color depending on state)
+        self.status_label = ttk.Label(control_frame, text="Status: RUNNING", font=font_spec_ui_bold, foreground="#3794ff")
+        self.status_label.grid(row=0, column=0, padx=8, pady=8, sticky="w")
+
+        self.start_btn = ttk.Button(control_frame, text="Start", command=self.click_start)
+        self.start_btn.grid(row=0, column=1, padx=4, pady=8, sticky="ew")
+        self.start_btn.state(['disabled']) # Running at start
+
+        self.stop_btn = ttk.Button(control_frame, text="Stop", command=self.click_stop)
+        self.stop_btn.grid(row=0, column=2, padx=4, pady=8, sticky="ew")
+
+        # TCP RST Disconnect Button
+        self.rst_btn = ttk.Button(control_frame, text="Force TCP RST Disconnect", command=self.click_rst)
+        self.rst_btn.grid(row=1, column=0, columnspan=3, padx=8, pady=8, sticky="ew")
+
+        # Settings Frame (Packed directly to root, taking remaining space)
+        settings_frame = ttk.LabelFrame(self.root, text="Command Settings")
+        settings_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
 
         # Configure columns for setting frame to distribute space nicely
         settings_frame.columnconfigure(0, weight=2)
@@ -264,46 +295,32 @@ class MockServerGUI:
             spinbox.grid(row=i, column=2, padx=8, pady=4)
             self.mock_behavior.set_delay_settings(cmd, spinbox)
 
-        # Logs
-        log_frame = ttk.LabelFrame(main_paned, text="Server Logs")
-        main_paned.add(log_frame, weight=2)
-
-        self.log_text = scrolledtext.ScrolledText(log_frame, state='disabled', font=font_spec_mono,
-                                                  bg=bg_editor, fg=fg_main, insertbackground=fg_main,
-                                                  relief="flat", borderwidth=0, highlightthickness=0)
-        self.log_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-
-        clear_btn = ttk.Button(log_frame, text="Clear Logs", command=self.clear_logs)
-        clear_btn.pack(pady=8, padx=8, anchor="e")
-
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.root.after(100, self.poll_logs)
         self.root.mainloop()
+
+    def click_start(self):
+        if not self.server.running:
+            self.server.start()
+            self.status_label.config(text="Status: RUNNING", foreground="#3794ff")
+            self.start_btn.state(['disabled'])
+            self.stop_btn.state(['!disabled'])
+
+    def click_stop(self):
+        if self.server.running:
+            self.server.stop()
+            self.status_label.config(text="Status: STOPPED", foreground="#e51400")
+            self.start_btn.state(['!disabled'])
+            self.stop_btn.state(['disabled'])
+
+    def click_rst(self):
+        self.server.force_rst_disconnect()
 
     def on_close(self):
         if self.root:
             self.root.destroy()
             self.root = None
 
-    def clear_logs(self):
-        if self.log_text:
-            self.log_text.config(state='normal')
-            self.log_text.delete(1.0, tk.END)
-            self.log_text.config(state='disabled')
 
-    def poll_logs(self):
-        while True:
-            try:
-                msg = self.mock_behavior.log_queue.get_nowait()
-                if self.log_text:
-                    self.log_text.config(state='normal')
-                    self.log_text.insert(tk.END, f"{msg}\n")
-                    self.log_text.see(tk.END)
-                    self.log_text.config(state='disabled')
-            except queue.Empty:
-                break
-        if self.root:
-            self.root.after(100, self.poll_logs)
 
 class FTPCommandHandler(IFTPCommandHandler):
     def __init__(self, host: str, data_port: int, file_system: IFileSystem, mock_behavior: IMockBehavior):
@@ -494,8 +511,7 @@ class FTPCommandHandler(IFTPCommandHandler):
             path += self.pending_store_filename
             self.vfs.store_file(path, data)
             msg = f"Stored {len(data)} bytes to file {path}"
-            print(msg)
-            self.mock_behavior.log_message(msg)
+            logger.info(msg)
             self.store_mode = False
             self.pending_store_filename = None
             writer.close()
@@ -516,6 +532,7 @@ class FTPMockServer:
         self.server = None
         self.loop = None
         self.server_thread = None
+        self.active_clients = set()
 
         self.mock_behavior = MockBehavior()
         self.file_system = VirtualFileSystem()
@@ -526,7 +543,7 @@ class FTPMockServer:
             self.mock_behavior
         )
 
-        self.gui = MockServerGUI(self.mock_behavior)
+        self.gui = MockServerGUI(self.mock_behavior, server=self)
 
     def start(self):
         self.running = True
@@ -545,8 +562,7 @@ class FTPMockServer:
             self.port
         )
         msg = f"FTP Mock Server running on {self.host}:{self.port}"
-        print(msg)
-        self.mock_behavior.log_message(msg)
+        logger.info(msg)
 
         async with self.server:
             try:
@@ -555,56 +571,85 @@ class FTPMockServer:
                 pass
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        self.active_clients.add(writer)
         addr = writer.get_extra_info('peername')
         msg = f"Client connected from {addr}"
-        print(msg)
-        self.mock_behavior.log_message(msg)
+        logger.info(msg)
 
-        writer.write(FTPResponse(220, "Welcome to FTP Mock Server").encode())
-        await writer.drain()
+        try:
+            writer.write(FTPResponse(220, "Welcome to FTP Mock Server").encode())
+            await writer.drain()
 
-        while True:
-            try:
-                data = (await reader.read(1024)).decode().strip()
-                if not data:
-                    break
+            while True:
+                try:
+                    data = (await reader.read(1024)).decode().strip()
+                    if not data:
+                        break
 
-                print(f"> {data}")
-                command = data.split(' ')[0]
-                args = data[len(command):].strip()
+                    logger.info(f"> {data}")
+                    command = data.split(' ')[0]
+                    args = data[len(command):].strip()
 
-                response = await self.command_handler.handle_command(command, args)
-                writer.write(response.encode())
-                print(f"< {response.code} {response.message}")
-                await writer.drain()
-
-                if response.code == 150:  # For LIST or STOR command
-                    writer.write(FTPResponse(226, "Transfer complete").encode())
+                    response = await self.command_handler.handle_command(command, args)
+                    writer.write(response.encode())
+                    logger.info(f"< {response.code} {response.message}")
                     await writer.drain()
 
-                if command.upper() == "QUIT":
+                    if response.code == 150:  # For LIST or STOR command
+                        writer.write(FTPResponse(226, "Transfer complete").encode())
+                        await writer.drain()
+
+                    if command.upper() == "QUIT":
+                        break
+
+                except Exception as e:
+                    msg = f"Error handling client: {e}"
+                    logger.error(msg)
                     break
+        finally:
+            self.active_clients.discard(writer)
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+            msg = f"Client disconnected from {addr}"
+            logger.info(msg)
 
+    def force_rst_disconnect(self):
+        if self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self._async_force_rst_disconnect)
+
+    def _async_force_rst_disconnect(self):
+        import struct
+        clients = list(self.active_clients)
+        if not clients:
+            logger.info("No active clients to disconnect.")
+            return
+        logger.info(f"Forcing TCP RST disconnect for {len(clients)} client(s)...")
+        for writer in clients:
+            try:
+                sock = writer.get_extra_info('socket')
+                if sock:
+                    # SO_LINGER onoff=1, l_linger=0 forces TCP RST on close
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                writer.close()
             except Exception as e:
-                msg = f"Error handling client: {e}"
-                print(msg)
-                self.mock_behavior.log_message(msg)
-                break
-
-        writer.close()
-        await writer.wait_closed()
-        msg = f"Client disconnected from {addr}"
-        print(msg)
-        self.mock_behavior.log_message(msg)
+                logger.error(f"Error during RST disconnect: {e}")
 
     def stop(self):
         self.running = False
         if self.server:
             self.server.close()
+            self.server = None
         if self.loop:
             for task in asyncio.all_tasks(self.loop):
                 task.cancel()
             self.loop.call_soon_threadsafe(self.loop.stop)
+            self.loop = None
+        if self.server_thread:
+            self.server_thread.join(timeout=1.0)
+            self.server_thread = None
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='FTP Mock Server')
@@ -616,6 +661,6 @@ if __name__ == "__main__":
     try:
         server.gui.run()
     except KeyboardInterrupt:
-        print("\nShutting down server...")
+        logger.info("Shutting down server...")
     finally:
         server.stop()
