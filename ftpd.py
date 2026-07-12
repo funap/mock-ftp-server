@@ -213,7 +213,7 @@ class MockServerGUI:
 
             var = tk.BooleanVar()
             self.mock_behavior.set_error_settings(cmd, var)
-            ttk.Checkbutton(settings_frame, variable=var).grid(row=i, column=1, padx=5, pady=5)
+            ttk.Checkbutton(settings_frame, variable=var, cursor="hand2").grid(row=i, column=1, padx=5, pady=5)
 
             spinbox = ttk.Spinbox(settings_frame, from_=0, to=10, increment=0.1, width=8)
             spinbox.set(0)
@@ -228,7 +228,7 @@ class MockServerGUI:
                                                   bg="black", fg="#39FF14", insertbackground="#39FF14")
         self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        ttk.Button(log_frame, text="Clear Logs", command=self.clear_logs).pack(pady=5)
+        ttk.Button(log_frame, text="Clear Logs", command=self.clear_logs, cursor="hand2").pack(pady=5)
 
         self.root.protocol("WM_DELETE_WINDOW", lambda: None)
         self.root.after(100, self.poll_logs)

@@ -237,3 +237,55 @@ async def test_mock_error_behavior(command_handler):
     assert res.code == 500
     assert res.message == "CWD command failed"
     assert command_handler.current_directory == "/" # Verify state wasn't changed
+
+@pytest.mark.asyncio
+async def test_gui_elements_have_hand2_cursor(dummy_mock_behavior):
+    import tkinter as tk
+    from tkinter import ttk
+    from ftpd import MockServerGUI
+
+    # Create root without mainloop
+    root = tk.Tk()
+
+    # Avoid calling run() as it blocks, directly inspect what it would create
+    # Let's write a small script that instantiates MockServerGUI and builds UI elements,
+    # or just use patching. Actually, run() creates the root and calls mainloop.
+    # To test this we could either mock mainloop or use threading but threading + tests in tkinter is tricky.
+
+    # A safer way to test UI properties in tkinter tests:
+    # 1. Temporarily patch Tk.mainloop to return immediately.
+    # 2. Call run()
+    # 3. Inspect widgets.
+    # 4. Destroy root.
+
+    orig_mainloop = tk.Tk.mainloop
+    tk.Tk.mainloop = lambda self: None
+
+    gui = MockServerGUI(dummy_mock_behavior)
+
+    try:
+        gui.run()
+        # Find all checkbuttons and buttons in the widget tree
+        def find_widgets(widget, class_name):
+            found = []
+            for child in widget.winfo_children():
+                if child.winfo_class() == class_name:
+                    found.append(child)
+                found.extend(find_widgets(child, class_name))
+            return found
+
+        checkbuttons = find_widgets(gui.root, 'TCheckbutton')
+        buttons = find_widgets(gui.root, 'TButton')
+
+        assert len(checkbuttons) > 0, "Should have found some checkbuttons"
+        assert len(buttons) > 0, "Should have found some buttons"
+
+        for cb in checkbuttons:
+            assert str(cb.cget('cursor')) == 'hand2', f"Checkbutton {cb} does not have hand2 cursor"
+
+        for btn in buttons:
+            assert str(btn.cget('cursor')) == 'hand2', f"Button {btn} does not have hand2 cursor"
+
+    finally:
+        gui.root.destroy()
+        tk.Tk.mainloop = orig_mainloop
