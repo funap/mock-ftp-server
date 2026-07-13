@@ -226,18 +226,18 @@ class MockServerGUI:
         style.configure('TLabel', background=bg_dark, foreground=fg_main)
         
         # Checkbutton styling
-        style.configure('TCheckbutton', background=bg_dark, foreground=fg_main, focuscolor=bg_dark)
+        style.configure('TCheckbutton', background=bg_dark, foreground=fg_main, focuscolor=accent_color)
         style.map('TCheckbutton',
                   background=[('active', bg_dark)],
-                  indicatorcolor=[('selected', accent_color), ('!selected', bg_dark)],
+                  indicatorcolor=[('selected', accent_color), ('focus', '#4d4d4d'), ('!selected', bg_dark)],
                   foreground=[('active', fg_main)])
 
         # Flat Button styling
         style.configure('TButton', background=bg_header, foreground=fg_main, bordercolor=border_color, lightcolor=border_color, darkcolor=border_color, borderwidth=1, relief="flat", padding=(10, 4))
         style.map('TButton',
-                  background=[('pressed', accent_color), ('active', bg_hover), ('disabled', bg_dark)],
+                  background=[('pressed', accent_color), ('active', bg_hover), ('disabled', bg_dark), ('focus', bg_hover)],
                   foreground=[('pressed', '#ffffff'), ('active', fg_main), ('disabled', '#555555')],
-                  bordercolor=[('active', border_color), ('disabled', border_color)])
+                  bordercolor=[('focus', accent_color), ('active', border_color), ('disabled', border_color)])
 
         # Spinbox styling
         style.configure('TSpinbox', fieldbackground=bg_editor, foreground=fg_main, background=bg_header, arrowcolor=fg_main, bordercolor=border_color, lightcolor=border_color, darkcolor=border_color, borderwidth=1)

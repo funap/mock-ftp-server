@@ -1,0 +1,3 @@
+## 2024-05-24 - Missing Focus Indicators in Custom Tkinter Dark Theme
+**Learning:** When implementing custom themes in Tkinter (specifically using `ttk.Style` with the 'clam' theme), setting `focuscolor` to match the background color effectively hides the keyboard focus indicator. In addition, missing explicit `('focus', color)` mappings in `style.map` for elements like buttons means they give no visual feedback when navigated to via the keyboard.
+**Action:** Always ensure that custom styled `ttk` widgets map the `focus` state to a visually distinct color (e.g., an accent color or a slightly lighter background) so keyboard users can see which element is currently focused.
