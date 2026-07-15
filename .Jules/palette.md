@@ -1,0 +1,3 @@
+## 2024-07-15 - Improve Keyboard Accessibility in tkinter custom dark themes
+**Learning:** When using a custom dark theme over ttk 'clam' style in tkinter, native focus indicators might be masked by static background and foreground colors. If no specific hover or focus mappings are provided in `style.map`, keyboard navigation (e.g., using Tab to move focus) becomes invisible to the user.
+**Action:** Always provide explicit `('focus', ...)` mappings in `style.map` for interactive widgets like `TButton` and `TCheckbutton`, and set the `focuscolor` parameter in `style.configure` to an accent color to ensure keyboard focus states remain visible and accessible.
